@@ -5,3 +5,8 @@ spacy
 pdfminer.six
 keybert
 sentence-transformers
+faiss-cpu
+numpy
+requests
+llama-index[embeddings-gemini]
+llama-index-embeddings-gemini
