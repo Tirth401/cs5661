@@ -1,0 +1,7 @@
+streamlit
+pandas
+matplotlib
+spacy
+pdfminer.six
+keybert
+sentence-transformers
