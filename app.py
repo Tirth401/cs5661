@@ -13,7 +13,6 @@ from nltk.corpus import stopwords
 from pdfminer.high_level import extract_text
 from difflib import get_close_matches
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
-
 from rag_utils import (
     initialize_embedding_model,
     get_embeddings,
@@ -155,7 +154,6 @@ def fuzzy_match(skills, reference):
 def load_and_enrich_skills():
     df = pd.read_csv("resume_data.csv")
     df.columns = df.columns.str.strip().str.lower()
-
     def map_to_title(pos_list_str):
         try:
             positions = ast.literal_eval(pos_list_str)
@@ -228,7 +226,6 @@ with col1:
     role = st.selectbox("🎯 Select Target Role", list(role_skill_map.keys()))
 with col2:
     file = st.file_uploader("📄 Upload Your Resume (PDF)", type=["pdf"])
-
 if file:
     with st.spinner("🧠 Analyzing your resume..."):
         text = extract_text_from_pdf_file(file)
@@ -255,7 +252,6 @@ if file:
 
     
     st.markdown("<div class='info-box'>💡 Tip: Use Coursera, Udemy, or LinkedIn Learning to build missing skills.</div>", unsafe_allow_html=True)
-
     st.markdown("### 🤖 Ask About Your Resume")
     query = st.text_input("💬 Ask a question (e.g., 'What are my strengths?' or 'What can I improve?')")
 
