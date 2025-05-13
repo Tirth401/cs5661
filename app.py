@@ -1,4 +1,3 @@
-# app.py
 import numpy as np
 import streamlit as st
 import pandas as pd
@@ -7,6 +6,7 @@ import ast
 import re
 import nltk
 import language_tool_python
+import base64
 from collections import Counter
 from nltk.stem import PorterStemmer
 from nltk.corpus import stopwords
@@ -26,6 +26,75 @@ nltk.download('stopwords')
 
 # === Streamlit Page Setup
 st.set_page_config(page_title="Resume Skill Matcher", layout="centered")
+
+# === Background and Styling
+def set_background_and_styles():
+    st.markdown("""
+        <style>
+        .stApp {
+            font-family: 'Segoe UI', sans-serif;
+            background-image: 
+                linear-gradient(to bottom right, rgba(255,255,255,0.85), rgba(240,240,240,0.85)),
+                url("https://img.freepik.com/free-photo/top-view-desk-concept-with-copy-space_23-2148236824.jpg?semt=ais_hybrid&w=740");
+            background-size: cover;
+            background-attachment: fixed;
+            background-position: center;
+        }
+
+        .glass-box {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(12px);
+            padding: 20px;
+            border-radius: 16px;
+            margin-bottom: 20px;
+        }
+
+        .score-circle {
+            width: 160px;
+            height: 160px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            font-weight: bold;
+            border: 2px solid #ccc;
+            color: #222;
+            margin: 20px auto;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        .pill {
+            display: inline-block;
+            background: rgba(0, 0, 0, 0.07);
+            padding: 6px 12px;
+            margin: 4px;
+            border-radius: 20px;
+            font-size: 14px;
+            color: #000;
+        }
+
+        .info-box {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(6px);
+            padding: 15px;
+            border-left: 5px solid #f59e0b;
+            border-radius: 10px;
+            margin-top: 25px;
+            font-size: 15px;
+            color: #222;
+        }
+
+        h1, h2, h3, p {
+            color: #222 !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+
+set_background_and_styles()
 
 # === Constants
 stemmer = PorterStemmer()
@@ -140,7 +209,6 @@ def compute_skill_match(resume_skills, required_skills, resume_text=None):
 
     skill_score = len(matched) / max(len(required_skills), 1)
 
-    # Grammar penalty using language_tool_python
     tool = language_tool_python.LanguageTool('en-US')
     matches = tool.check(resume_text or "")
     grammar_penalty = len(matches)
@@ -150,59 +218,49 @@ def compute_skill_match(resume_skills, required_skills, resume_text=None):
     return final_score, matched, missing, matches
 
 # === App UI
-st.markdown("## 🔍 Resume Skill Matcher")
-st.markdown("<p style='text-align:center;'>Upload your resume PDF and compare your skills to top industry roles.</p>", unsafe_allow_html=True)
+st.markdown("<div class='glass-box'>", unsafe_allow_html=True)
+st.markdown("<h2 style='text-align:center;'>🔍 Resume Skill Matcher</h2>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center;'>Upload your resume PDF and get personalized skill feedback for different tech roles.</p>", unsafe_allow_html=True)
+st.markdown("</div>", unsafe_allow_html=True)
 
-role = st.selectbox("🎯 Select Job Title", list(role_skill_map.keys()))
-file = st.file_uploader("📄 Upload Resume (PDF)", type=["pdf"])
+col1, col2 = st.columns(2)
+with col1:
+    role = st.selectbox("🎯 Select Target Role", list(role_skill_map.keys()))
+with col2:
+    file = st.file_uploader("📄 Upload Your Resume (PDF)", type=["pdf"])
 
 if file:
     with st.spinner("🧠 Analyzing your resume..."):
         text = extract_text_from_pdf_file(file)
         resume_skills = extract_skills_from_resume(text)
         required_skills = role_skill_map[role]
-        final_score, matched, missing, grammar_matches = compute_skill_match(resume_skills, required_skills, resume_text=text)
 
-    st.markdown("### 📊 Match Results")
+    st.markdown("<div class='glass-box'>", unsafe_allow_html=True)
+    st.markdown("### 📊 Match Summary")
     st.markdown(f"<div class='score-circle'>{final_score}%</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
     if final_score >= 80:
-        st.success("✅ Excellent match!")
+        st.success("✅ Great job! Your resume is a strong fit for this role.")
     elif final_score >= 50:
-        st.warning("⚠️ Fair match — improve key skills.")
+        st.warning("⚠️ Decent match. Consider improving your skill alignment.")
     else:
-        st.error("❌ Weak match — build more relevant skills.")
+        st.error("❌ Low match. Try gaining experience in the missing skill areas.")
 
-    with st.expander("🧠 Show Skill Details"):
-        st.markdown("✅ **Matched Skills**")
-        st.markdown("<div style='display: flex; flex-wrap: wrap; gap: 8px; padding: 8px;'>" + "".join([f"<span class='pill'>{s}</span>" for s in sorted(set(matched))]) + "</div>", unsafe_allow_html=True)
+    with st.expander("🧠 View Skill Breakdown"):
+        st.markdown("✅ **Matched Skills:**")
+        st.markdown("".join([f"<span class='pill'>{s}</span>" for s in sorted(matched)]), unsafe_allow_html=True)
+        st.markdown("❌ **Missing Skills:**")
+        st.markdown("".join([f"<span class='pill'>{s}</span>" for s in sorted(missing)]), unsafe_allow_html=True)
 
-        st.markdown("❌ **Missing Skills**")
-        st.markdown("<div style='display: flex; flex-wrap: wrap; gap: 8px; padding: 8px;'>" + "".join([f"<span class='pill'>{s}</span>" for s in sorted(set(missing))]) + "</div>", unsafe_allow_html=True)
+    
+    st.markdown("<div class='info-box'>💡 Tip: Use Coursera, Udemy, or LinkedIn Learning to build missing skills.</div>", unsafe_allow_html=True)
 
-    # Grammar Issues
-    with st.expander("📝 Grammar Feedback"):
-        if grammar_matches:
-            st.markdown(f"**Found {len(grammar_matches)} issue(s). Top issues:**")
-            for m in grammar_matches[:5]:
-                st.markdown(f"""
-                <div class='info-box'>
-                    <b>Context:</b> {m.context}<br>
-                    <b>Message:</b> {m.message}<br>
-                    <b>Suggestions:</b> {', '.join(m.replacements) if m.replacements else 'None'}
-                </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.success("✅ No major grammar issues detected.")
-
-    st.markdown("<div class='info-box'>💡 Tip: Use Coursera, Udemy, or LinkedIn Learning to build missing skills based on the list above.</div>", unsafe_allow_html=True)
-
-    # === RAG Integration UI
     st.markdown("### 🤖 Ask About Your Resume")
-    query = st.text_input("💬 Enter a question (e.g., What are my strengths?)")
+    query = st.text_input("💬 Ask a question (e.g., 'What are my strengths?' or 'What can I improve?')")
 
     if query:
-        with st.spinner("🔍 Querying resume with Gemini..."):
+        with st.spinner("🔍 Analyzing with Gemini..."):
             embedding_model = initialize_embedding_model()
             docs = [text]
             embeddings = get_embeddings(embedding_model, docs)
@@ -211,7 +269,6 @@ if file:
             response = generate_response(retrieved, query)
 
         st.markdown("### 💡 Gemini Insight")
-        st.markdown(f"<div class='info-box'>{response}</div>", unsafe_allow_html=True)
-
+        st.markdown(f"<div class='info-box'>{response.strip()}</div>", unsafe_allow_html=True)
 else:
-    st.info("📤 Upload a resume file above to begin.")
+    st.info("📤 Upload a resume to start the analysis.")
