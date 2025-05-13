@@ -6,6 +6,7 @@ import tempfile
 import ast
 import re
 import nltk
+import language_tool_python
 from collections import Counter
 from nltk.stem import PorterStemmer
 from nltk.corpus import stopwords
@@ -13,11 +14,20 @@ from pdfminer.high_level import extract_text
 from difflib import get_close_matches
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 
+from rag_utils import (
+    initialize_embedding_model,
+    get_embeddings,
+    create_faiss_index,
+    retrieve_similar_texts,
+    generate_response
+)
+
 nltk.download('stopwords')
 
-# === Setup
+# === Streamlit Page Setup
 st.set_page_config(page_title="Resume Skill Matcher", layout="centered")
 
+# === Constants
 stemmer = PorterStemmer()
 stop_words = set(stopwords.words('english')).union(ENGLISH_STOP_WORDS)
 
@@ -28,6 +38,7 @@ ROLE_KEYWORDS = {
     "Android Developer": ["android", "mobile", "kotlin", "java", "firebase", "xml"]
 }
 
+# === Utility Functions
 def extract_text_from_pdf_file(file):
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(file.read())
@@ -37,8 +48,7 @@ def clean_and_tokenize(text):
     text = re.sub(r'[^A-Za-z0-9\s\-]', ' ', text)
     text = re.sub(r'-', ' ', text)
     tokens = text.split()
-    tokens = [t for t in tokens if t.lower() not in stop_words and len(t) > 1]
-    return tokens
+    return [t for t in tokens if len(t) > 0 and t.lower() not in stop_words]
 
 def generate_phrases(tokens):
     unigrams = tokens
@@ -51,9 +61,10 @@ def extract_skills_from_resume(text):
     phrases = generate_phrases(tokens)
     normalized = set()
     for phrase in phrases:
-        normalized.add(phrase.lower())
-        normalized.add(stemmer.stem(phrase.lower()))
-    return normalized
+        lower = phrase.lower()
+        stem = stemmer.stem(lower)
+        normalized.update([phrase.strip(), lower.strip(), stem.strip()])
+    return set(normalized)
 
 def normalize_skills(skills):
     normalized = set()
@@ -62,7 +73,7 @@ def normalize_skills(skills):
         skill = re.sub(r'[^a-z0-9\s]', '', skill)
         normalized.add(skill)
         normalized.add(stemmer.stem(skill))
-    return normalized
+    return set(normalized)
 
 def fuzzy_match(skills, reference):
     matched = set()
@@ -108,14 +119,35 @@ def load_and_enrich_skills():
 
 role_skill_map = load_and_enrich_skills()
 
-def compute_skill_match(resume_skills, required_skills):
+def compute_skill_match(resume_skills, required_skills, resume_text=None):
     resume_skills = normalize_skills(resume_skills)
     required_skills = normalize_skills(required_skills)
     fuzzy_matches = fuzzy_match(resume_skills, required_skills)
     matched = resume_skills & required_skills | fuzzy_matches
     missing = required_skills - matched
-    score = round((len(matched) / max(len(required_skills), 1)) * 100, 2)
-    return score, matched, missing
+
+    def dedup(skills):
+        seen = {}
+        for s in sorted(skills, key=lambda x: -len(x)):
+            norm = re.sub(r'[^a-z0-9]', '', s.lower().replace(' ', ''))
+            stem = stemmer.stem(norm)
+            if not any(stem == existing or stem in existing or existing in stem for existing in seen):
+                seen[stem] = s
+        return set(seen.values())
+
+    matched = dedup(matched)
+    missing = dedup(missing)
+
+    skill_score = len(matched) / max(len(required_skills), 1)
+
+    # Grammar penalty using language_tool_python
+    tool = language_tool_python.LanguageTool('en-US')
+    matches = tool.check(resume_text or "")
+    grammar_penalty = len(matches)
+    grammar_score = max(0.0, 1.0 - grammar_penalty / 25)
+
+    final_score = round((0.9 * skill_score + 0.1 * grammar_score) * 100, 2)
+    return final_score, matched, missing, matches
 
 # === App UI
 st.markdown("## 🔍 Resume Skill Matcher")
@@ -129,26 +161,57 @@ if file:
         text = extract_text_from_pdf_file(file)
         resume_skills = extract_skills_from_resume(text)
         required_skills = role_skill_map[role]
-        score, matched, missing = compute_skill_match(resume_skills, required_skills)
+        final_score, matched, missing, grammar_matches = compute_skill_match(resume_skills, required_skills, resume_text=text)
 
     st.markdown("### 📊 Match Results")
-    st.markdown(f"<div class='score-circle'>{score}%</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='score-circle'>{final_score}%</div>", unsafe_allow_html=True)
 
-    if score >= 80:
+    if final_score >= 80:
         st.success("✅ Excellent match!")
-    elif score >= 50:
+    elif final_score >= 50:
         st.warning("⚠️ Fair match — improve key skills.")
     else:
         st.error("❌ Weak match — build more relevant skills.")
 
     with st.expander("🧠 Show Skill Details"):
         st.markdown("✅ **Matched Skills**")
-        st.markdown("<div style='display: flex; flex-wrap: wrap; gap: 8px; padding: 8px;'>" + "".join([f"<span class='pill'>{s}</span>" for s in sorted(matched)]) + "</div>", unsafe_allow_html=True)
+        st.markdown("<div style='display: flex; flex-wrap: wrap; gap: 8px; padding: 8px;'>" + "".join([f"<span class='pill'>{s}</span>" for s in sorted(set(matched))]) + "</div>", unsafe_allow_html=True)
 
         st.markdown("❌ **Missing Skills**")
-        st.markdown("<div style='display: flex; flex-wrap: wrap; gap: 8px; padding: 8px;'>" + "".join([f"<span class='pill'>{s}</span>" for s in sorted(missing)]) + "</div>", unsafe_allow_html=True)
+        st.markdown("<div style='display: flex; flex-wrap: wrap; gap: 8px; padding: 8px;'>" + "".join([f"<span class='pill'>{s}</span>" for s in sorted(set(missing))]) + "</div>", unsafe_allow_html=True)
+
+    # Grammar Issues
+    with st.expander("📝 Grammar Feedback"):
+        if grammar_matches:
+            st.markdown(f"**Found {len(grammar_matches)} issue(s). Top issues:**")
+            for m in grammar_matches[:5]:
+                st.markdown(f"""
+                <div class='info-box'>
+                    <b>Context:</b> {m.context}<br>
+                    <b>Message:</b> {m.message}<br>
+                    <b>Suggestions:</b> {', '.join(m.replacements) if m.replacements else 'None'}
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.success("✅ No major grammar issues detected.")
 
     st.markdown("<div class='info-box'>💡 Tip: Use Coursera, Udemy, or LinkedIn Learning to build missing skills based on the list above.</div>", unsafe_allow_html=True)
+
+    # === RAG Integration UI
+    st.markdown("### 🤖 Ask About Your Resume")
+    query = st.text_input("💬 Enter a question (e.g., What are my strengths?)")
+
+    if query:
+        with st.spinner("🔍 Querying resume with Gemini..."):
+            embedding_model = initialize_embedding_model()
+            docs = [text]
+            embeddings = get_embeddings(embedding_model, docs)
+            faiss_index = create_faiss_index(np.array(embeddings, dtype=np.float32))
+            retrieved = retrieve_similar_texts(embedding_model, faiss_index, query, docs)
+            response = generate_response(retrieved, query)
+
+        st.markdown("### 💡 Gemini Insight")
+        st.markdown(f"<div class='info-box'>{response}</div>", unsafe_allow_html=True)
 
 else:
     st.info("📤 Upload a resume file above to begin.")
