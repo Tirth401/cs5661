@@ -137,11 +137,13 @@ def extract_skills_from_resume(text):
 def normalize_skills(skills):
     normalized = set()
     for skill in skills:
-        skill = skill.lower().strip().replace('-', ' ')
-        skill = re.sub(r'[^a-z0-9\s]', '', skill)
+        skill = skill.lower().strip()
+        skill = re.sub(r'[^a-z0-9\s]', ' ', skill)  # Replace non-alphanumeric chars with space
+        skill = re.sub(r'\s+', ' ', skill)  # Normalize multiple spaces
         normalized.add(skill)
         normalized.add(stemmer.stem(skill))
     return set(normalized)
+
 
 def fuzzy_match(skills, reference):
     matched = set()
@@ -149,6 +151,12 @@ def fuzzy_match(skills, reference):
         close = get_close_matches(skill, reference, cutoff=0.8)
         matched.update(close)
     return matched
+
+def extract_phrases_from_text(text):
+    tokens = clean_and_tokenize(text.lower())
+    return generate_phrases(tokens)
+
+
 
 @st.cache_data
 def load_and_enrich_skills():
@@ -186,12 +194,9 @@ def load_and_enrich_skills():
 
 role_skill_map = load_and_enrich_skills()
 
-def compute_skill_match(resume_skills, required_skills, resume_text=None):
-    resume_skills = normalize_skills(resume_skills)
+def compute_skill_match(resume_phrases, required_skills, resume_text=None):
     required_skills = normalize_skills(required_skills)
-    fuzzy_matches = fuzzy_match(resume_skills, required_skills)
-    matched = resume_skills & required_skills | fuzzy_matches
-    missing = required_skills - matched
+    resume_phrases = normalize_skills(resume_phrases)
 
     def dedup(skills):
         seen = {}
@@ -202,8 +207,16 @@ def compute_skill_match(resume_skills, required_skills, resume_text=None):
                 seen[stem] = s
         return set(seen.values())
 
+    required_skills = dedup(required_skills)
+
+    matched = set()
+    for skill in required_skills:
+        close = get_close_matches(skill, resume_phrases, cutoff=0.8)
+        if close:
+            matched.add(skill)
+
     matched = dedup(matched)
-    missing = dedup(missing)
+    missing = required_skills - matched
 
     skill_score = len(matched) / max(len(required_skills), 1)
 
@@ -212,8 +225,37 @@ def compute_skill_match(resume_skills, required_skills, resume_text=None):
     grammar_penalty = len(matches)
     grammar_score = max(0.0, 1.0 - grammar_penalty / 25)
 
-    final_score = round((0.9 * skill_score + 0.1 * grammar_score) * 100, 2)
+    final_score = round((1.0 * skill_score) * 100, 2)
     return final_score, matched, missing, matches
+
+# def compute_skill_match(resume_skills, required_skills, resume_text=None):
+#     resume_skills = normalize_skills(resume_skills)
+#     required_skills = normalize_skills(required_skills)
+#     fuzzy_matches = fuzzy_match(resume_skills, required_skills)
+#     matched = resume_skills & required_skills | fuzzy_matches
+#     missing = required_skills - matched
+
+#     def dedup(skills):
+#         seen = {}
+#         for s in sorted(skills, key=lambda x: -len(x)):
+#             norm = re.sub(r'[^a-z0-9]', '', s.lower().replace(' ', ''))
+#             stem = stemmer.stem(norm)
+#             if not any(stem == existing or stem in existing or existing in stem for existing in seen):
+#                 seen[stem] = s
+#         return set(seen.values())
+
+#     matched = dedup(matched)
+#     missing = dedup(missing)
+
+#     skill_score = len(matched) / max(len(required_skills), 1)
+
+#     tool = language_tool_python.LanguageTool('en-US')
+#     matches = tool.check(resume_text or "")
+#     grammar_penalty = len(matches)
+#     grammar_score = max(0.0, 1.0 - grammar_penalty / 25)
+
+#     final_score = round((0.9 * skill_score + 0.1 * grammar_score) * 100, 2)
+#     return final_score, matched, missing, matches
 
 # === App UI
 st.markdown("<div class='glass-box'>", unsafe_allow_html=True)
@@ -229,8 +271,14 @@ with col2:
 if file:
     with st.spinner("🧠 Analyzing your resume..."):
         text = extract_text_from_pdf_file(file)
-        resume_skills = extract_skills_from_resume(text)
+        # resume_skills = extract_skills_from_resume(text)
+        # resume_skills = {text.lower()}
+        resume_phrases= extract_phrases_from_text(text)
+        print("*****************************************")
+        print("skills",resume_phrases)
+        print("******************************************")
         required_skills = role_skill_map[role]
+        final_score, matched, missing, grammar_issues = compute_skill_match(resume_phrases, required_skills, resume_text=text)
 
     st.markdown("<div class='glass-box'>", unsafe_allow_html=True)
     st.markdown("### 📊 Match Summary")
